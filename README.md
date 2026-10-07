@@ -1,129 +1,98 @@
-# Deploy Final — FastAPI on AWS
+# Báo Cáo Triển Khai FastAPI Trên AWS
 
-## Project Overview
+## 1. Tổng quan dự án
+Ứng dụng REST API viết bằng FastAPI, container hóa bằng Docker và triển khai tự động lên AWS EC2 qua GitHub Actions.
+- **Backend:** FastAPI (Python 3.11), SQLAlchemy.
+- **Database:** PostgreSQL 14 trên Amazon RDS (Private Subnet).
+- **Lưu trữ:** Amazon S3 lưu file upload/download.
+- **Máy chủ:** Amazon EC2 (Amazon Linux 2023) chạy Docker.
+- **CI/CD:** GitHub Actions tự động build và deploy khi push code lên nhánh `main`.
 
-REST API built with FastAPI: CRUD items in PostgreSQL (RDS), upload and download files via Amazon S3. The app runs in Docker on EC2; GitHub Actions deploys on push to `main`.
+---
 
-## Architecture
+## 2. Sơ đồ kiến trúc
 
 ```text
-Developer → GitHub → GitHub Actions (SSH)
-                         ↓
-Internet → EC2 (Docker: FastAPI) → RDS PostgreSQL (private)
-                         ↓
-                    Amazon S3
-IAM: EC2 instance role for S3; IAM user optional for CLI
+[Người dùng] ---> HTTP 8000 ---> [EC2: FastAPI (Docker)] ---> RDS PostgreSQL 14 (Private)
+                                           |
+                                      IAM Role S3
+                                           v
+[GitHub Actions] ---> SSH 22 ---> [Amazon S3 Bucket]
 ```
 
-## Prerequisites
+---
 
-- AWS account, GitHub account
-- Tools: Git, Docker, AWS CLI
-- EC2 key pair (`.pem`)
+## 3. Yêu cầu môi trường
+- Tài khoản AWS (Region `us-east-1`).
+- Công cụ: Python 3.11+, Docker Desktop, Git, SSH Client.
+- File SSH Key: `HauVT17-key.pem`.
 
-## Local Development
+---
 
+## 4. Chạy thử nghiệm Local
 ```bash
+# 1. Tạo file cấu hình
 cp .env.example .env
+
+# 2. Khởi chạy app và database local
 docker compose up -d --build
 ```
+- Swagger UI local: `http://localhost:8001/docs`
+- Kiểm tra trạng thái: `http://localhost:8001/health`
 
-Open http://localhost:8001/docs (host port 8001; EC2 uses 8000)
+---
 
-Local Postgres is provided by `docker-compose.yml`. For S3 uploads locally, set `S3_BUCKET_NAME` and AWS credentials (`aws configure` or env vars).
+## 5. Danh sách tài nguyên AWS đã tạo
 
-## AWS Resources
+| Dịch vụ | Tên tài nguyên | Thông số | Mục đích |
+| :--- | :--- | :--- | :--- |
+| **IAM User** | `fastapi_deployer` | Quyền CLI & CI | Quản trị triển khai |
+| **IAM Role** | `ec2-s3-app-role` | Quyền đọc/ghi S3 | Gắn vào EC2 truy cập S3 |
+| **RDS** | `hauvt17-db` | PostgreSQL 14, `db.t3.micro` | Database chính của app |
+| **S3** | `fastapi-app-files-nmp2026`| Region `us-east-1` | Lưu trữ file upload |
+| **EC2** | `HauVT17-Web-Server` | `t3.micro`, IP: `44.195.67.82` | Máy chủ chạy ứng dụng |
 
-| Resource | Purpose |
-|----------|---------|
-| IAM user | CLI / optional CI |
-| IAM role `ec2-s3-app-role` | S3 access from EC2 |
-| RDS PostgreSQL 14 `mssv-db` | Application database |
-| S3 `mssv-bucket-*` | File storage |
-| EC2 + security groups | Run Docker container |
-| GitHub Secrets | CI/CD deploy |
+---
 
-### Part 1 — IAM
+## 6. Biến môi trường (.env)
 
-1. Create IAM user, attach `iam/github-actions-policy.json` (adjust as needed).
-2. Create role for EC2, attach `iam/ec2-s3-policy.json` (replace `YOUR_BUCKET_NAME`).
-3. Attach role to EC2 instance (Instance profile).
+| Biến | Giá trị | Ý nghĩa |
+| :--- | :--- | :--- |
+| `DATABASE_URL` | `postgresql://postgres:Thanhhau@hauvt17-db.cy9ykkoeugi5.us-east-1.rds.amazonaws.com:5432/postgres` | Kết nối RDS |
+| `AWS_REGION` | `us-east-1` | Vùng AWS |
+| `S3_BUCKET_NAME`| `fastapi-app-files-nmp2026` | Bucket S3 |
+| `APP_NAME` | `fastapi-app` | Tên API |
 
-### Part 2 — RDS
+---
 
-- Engine PostgreSQL 14, `db.t3.micro`, 20 GiB gp2
-- Identifier: `mssv-db`
-- Default VPC, **Public access: No**
-- Security group: inbound **5432** from EC2 security group only
-- `DATABASE_URL`: `postgresql://postgres:<password>@<endpoint>:5432/postgres`
+## 7. Các bước triển khai (Deploy)
 
-### Part 3 — S3
-
-- Bucket name `mssv-bucket-<random>`, region `us-east-1`
-- Block public access enabled, versioning disabled
-- EC2 role policy allows Put/Get/Delete on that bucket
-
-### Part 5 — EC2
-
-1. Run `scripts/ec2-bootstrap.sh` on the instance (log out and back in after Docker group change).
-2. Clone repo to `~/deploy-final`.
-3. Create `~/deploy-final/.env` from `.env.example` (RDS URL + bucket name).
-4. Deploy:
-
+### Deploy thủ công trên EC2:
 ```bash
+ssh -i "HauVT17-key.pem" ec2-user@44.195.67.82
+git clone https://github.com/thanhhauatk/deploy-final.git ~/deploy-final
 cd ~/deploy-final
 docker compose -f docker-compose.prod.yml up -d --build
 ```
 
-Security group: **22** from your IP, **8000** from `0.0.0.0/0` (lab).
+### Deploy tự động bằng GitHub Actions:
+Cấu hình GitHub Secrets (`Settings -> Secrets and variables -> Actions`):
+- `EC2_HOST`: `44.195.67.82`
+- `EC2_USER`: `ec2-user`
+- `EC2_SSH_KEY`: Nội dung file `HauVT17-key.pem`
+- `DATABASE_URL`, `AWS_REGION`, `S3_BUCKET_NAME`
 
-## Environment Variables
+Mỗi khi push commit lên nhánh `main`, pipeline `.github/workflows/deploy.yml` sẽ tự động deploy.
 
-| Variable | Description |
-|----------|-------------|
-| `DATABASE_URL` | PostgreSQL connection string |
-| `AWS_REGION` | e.g. `us-east-1` |
-| `S3_BUCKET_NAME` | Target S3 bucket |
-| `APP_NAME` | API title in Swagger |
+---
 
-On EC2, prefer IAM role for S3 (no access keys in `.env`).
+## 8. Danh sách API (Swagger UI)
+Truy cập trực tiếp: `http://44.195.67.82:8000/docs`
 
-## Deployment (CI/CD)
-
-GitHub → Settings → Secrets and variables → Actions:
-
-| Secret | Value |
-|--------|--------|
-| `EC2_HOST` | Public IP or DNS |
-| `EC2_USER` | `ec2-user` (Amazon Linux) or `ubuntu` |
-| `EC2_SSH_KEY` | Full `.pem` contents |
-| `DATABASE_URL` | RDS URL (optional if `.env` already on server) |
-| `AWS_REGION` | `us-east-1` |
-| `S3_BUCKET_NAME` | Your bucket |
-| `AWS_ACCESS_KEY_ID` | Optional, not required for SSH-only deploy |
-| `AWS_SECRET_ACCESS_KEY` | Optional |
-
-Push to `main` triggers `.github/workflows/deploy.yml`.
-
-## API Documentation
-
-| Method | Path | Description |
-|--------|------|-------------|
-| GET | `/health` | Health + DB + S3 config |
-| GET/POST | `/items` | List / create items |
-| GET/PATCH/DELETE | `/items/{id}` | Item CRUD |
-| POST | `/files/upload` | Upload multipart file to S3 |
-| GET | `/files` | List uploaded files |
-| GET | `/files/{id}/download` | Download file |
-| DELETE | `/files/{id}` | Delete S3 object + record |
-
-Interactive docs: `/docs`
-
-## Screenshots Checklist
-
-- IAM user and EC2 role policies
-- RDS instance and security group
-- S3 bucket settings, Postman upload, object in bucket
-- `docker ps` and browser `/docs` (local and EC2)
-- EC2 instance, public URL
-- GitHub secrets, successful workflow run
+- `GET /health`: Kiểm tra API và kết nối Database/S3.
+- `GET, POST /items`: Xem và thêm mới dữ liệu vào RDS.
+- `GET, PATCH, DELETE /items/{id}`: Xem chi tiết, sửa và xoá dữ liệu.
+- `POST /files/upload`: Upload file trực tiếp lên S3.
+- `GET /files`: Xem danh sách file đã tải lên.
+- `GET /files/{id}/download`: Tải file từ S3 về máy.
+- `DELETE /files/{id}`: Xoá file trên S3.
