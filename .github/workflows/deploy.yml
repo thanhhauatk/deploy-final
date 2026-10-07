@@ -19,16 +19,41 @@ jobs:
           script: |
             set -e
             APP_DIR="$HOME/deploy-final"
-            test -d "$APP_DIR/.git"
+            
+            # 1. Cài đặt Docker và Git nếu chưa có
+            if ! command -v docker >/dev/null 2>&1; then
+              sudo dnf update -y && sudo dnf install -y docker git
+              sudo systemctl enable --now docker
+              sudo usermod -aG docker "$USER"
+            fi
+
+            # 2. Cài đặt Docker Compose Plugin nếu chưa có
+            if ! docker compose version >/dev/null 2>&1; then
+              sudo mkdir -p /usr/local/lib/docker/cli-plugins
+              sudo curl -SL "https://github.com/docker/compose/releases/download/v2.29.7/docker-compose-linux-x86_64" \
+                -o /usr/local/lib/docker/cli-plugins/docker-compose
+              sudo chmod +x /usr/local/lib/docker/cli-plugins/docker-compose
+            fi
+
+            # 3. Clone hoặc pull source code
+            if [ ! -d "$APP_DIR" ]; then
+              git clone https://github.com/thanhhauatk/deploy-final.git "$APP_DIR"
+            fi
             cd "$APP_DIR"
-            git pull origin main
+            git fetch origin main
+            git reset --hard origin/main
+
+            # 4. Cấu hình file .env
             if [ -n "${{ secrets.DATABASE_URL }}" ]; then
               umask 077
               printf '%s\n' \
                 "DATABASE_URL=${{ secrets.DATABASE_URL }}" \
                 "AWS_REGION=${{ secrets.AWS_REGION }}" \
                 "S3_BUCKET_NAME=${{ secrets.S3_BUCKET_NAME }}" \
-                "APP_NAME=deploy-final-api" > .env
+                "APP_NAME=fastapi-app" > .env
             fi
+
+            # 5. Build và khởi chạy container
             docker compose -f docker-compose.prod.yml up -d --build
             docker image prune -f
+
