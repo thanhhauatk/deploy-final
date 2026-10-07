@@ -1,0 +1,56 @@
+stages:
+  - test
+  - deploy
+
+# Stage 1: Kiểm tra cú pháp và dependencies
+test_app:
+  stage: test
+  image: python:3.11-slim
+  script:
+    - pip install --no-cache-dir -r requirements.txt
+    - python -c "import app.main; print('FastAPI App configuration loaded successfully!')"
+  rules:
+    - if: '$CI_PIPELINE_SOURCE == "merge_request_event" || $CI_COMMIT_BRANCH == "main"'
+
+# Stage 2: Deploy lên EC2 qua SSH
+deploy_to_ec2:
+  stage: deploy
+  image: alpine:latest
+  before_script:
+    - apk update && apk add --no-cache openssh-client bash
+    - eval $(ssh-agent -s)
+    - echo "$SSH_PRIVATE_KEY" | tr -d '\r' | ssh-add -
+    - mkdir -p ~/.ssh
+    - chmod 700 ~/.ssh
+    - ssh-keyscan -H "$EC2_HOST" >> ~/.ssh/known_hosts 2>/dev/null || true
+  script:
+    - |
+      ssh -o StrictHostKeyChecking=no $EC2_USER@$EC2_HOST << 'EOF'
+        set -e
+        APP_DIR="$HOME/deploy-final"
+        mkdir -p "$APP_DIR"
+        cd "$APP_DIR"
+
+        # Nếu đã có git repo thì pull code mới nhất
+        if [ -d ".git" ]; then
+          echo ">>> Pulling latest source code from git..."
+          git fetch origin main
+          git reset --hard origin/main
+        fi
+
+        # Kiểm tra file .env trên EC2
+        if [ ! -f ".env" ]; then
+          echo "Warning: .env file not found! Copying from .env.example..."
+          cp .env.example .env
+        fi
+
+        echo ">>> Building Docker image and restarting containers..."
+        docker compose -f docker-compose.prod.yml up -d --build
+        docker image prune -f
+
+        echo ">>> Checking running containers..."
+        docker compose -f docker-compose.prod.yml ps
+        echo ">>> Deploy to EC2 completed successfully!"
+      EOF
+  rules:
+    - if: '$CI_COMMIT_BRANCH == "main"'
